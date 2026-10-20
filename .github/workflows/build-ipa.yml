@@ -1,0 +1,88 @@
+name: Build unsigned IPA
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      models:
+        description: "要打包的模型（空格分隔，Ultralytics 权重名或仓库内 .pt 路径）"
+        default: "yolo26n yolo26s"
+      quantize:
+        description: "权重精度"
+        type: choice
+        options: ["16", "8", "32"]
+        default: "16"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      MODELS: ${{ inputs.models || 'yolo26n yolo26s' }}
+      QUANTIZE: ${{ inputs.quantize || '16' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: scripts/requirements.txt
+
+      - name: Export YOLO models to Core ML
+        run: |
+          pip install -r scripts/requirements.txt
+          python scripts/export_models.py $MODELS --quantize "$QUANTIZE" --out Models
+
+      - name: Compile models (.mlpackage -> .mlmodelc)
+        run: |
+          for pkg in Models/*.mlpackage; do
+            xcrun coremlcompiler compile "$pkg" Models/
+            rm -rf "$pkg"
+          done
+          ls -la Models
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+          xcodebuild -version
+
+      - name: Build (no code signing)
+        run: |
+          xcodebuild build \
+            -project YOLOApp.xcodeproj \
+            -scheme YOLOApp \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            -quiet \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Package IPA
+        run: |
+          mkdir -p dist/Payload
+          cp -R build/Build/Products/Release-iphoneos/YOLOApp.app dist/Payload/
+          cd dist && zip -qry YOLOApp-unsigned.ipa Payload
+          ls -lh YOLOApp-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: YOLOApp-unsigned-ipa
+          path: dist/YOLOApp-unsigned.ipa
+          if-no-files-found: error
+
+      - name: Attach IPA to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/YOLOApp-unsigned.ipa
