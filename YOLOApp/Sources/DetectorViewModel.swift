@@ -9,6 +9,28 @@ struct FrameStats {
     var inferenceMs: Double = 0
     var postprocessMs: Double = 0
     var objectCount = 0
+    var tagMs: Double = 0
+    var tagCount = 0
+    var intrinsicsFromCamera = false
+}
+
+enum DetectionMode: String, CaseIterable, Identifiable {
+    case yolo
+    case aprilTag
+    case both
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .yolo: return "YOLO"
+        case .aprilTag: return "AprilTag"
+        case .both: return "同时"
+        }
+    }
+
+    var runsYOLO: Bool { self != .aprilTag }
+    var runsAprilTag: Bool { self != .yolo }
 }
 
 struct BenchmarkResult: Identifiable {
@@ -38,7 +60,34 @@ final class DetectorViewModel: ObservableObject {
         }
     }
 
+    @Published var detectionMode: DetectionMode = .yolo {
+        didSet {
+            let mode = detectionMode
+            camera.videoQueue.async {
+                self.activeMode = mode
+                if !mode.runsAprilTag { self.tagTracker.reset() }
+            }
+        }
+    }
+    /// Edge length of the tag's outer black square, in centimeters.
+    @Published var tagSizeCM: Double = 6.9 {
+        didSet {
+            let meters = tagSizeCM / 100
+            camera.videoQueue.async { self.activeTagSize = meters }
+        }
+    }
+    @Published var tagOrientation: TagPatternOrientation = .rotated180 {
+        didSet {
+            let orientation = tagOrientation
+            camera.videoQueue.async {
+                self.activeTagOrientation = orientation
+                self.tagTracker.reset()
+            }
+        }
+    }
+
     @Published private(set) var detections: [Detection] = []
+    @Published private(set) var tags: [TagOverlay] = []
     @Published private(set) var imageSize = CGSize(width: 1080, height: 1920)
     @Published private(set) var stats = FrameStats()
     @Published private(set) var isLoading = false
@@ -56,12 +105,17 @@ final class DetectorViewModel: ObservableObject {
     private var detector: YOLODetector?
     private var confidenceThreshold: Float = 0.25
     private var isPaused = false
+    private var activeMode: DetectionMode = .yolo
+    private var activeTagSize = 0.069
+    private var activeTagOrientation: TagPatternOrientation = .rotated180
+    private lazy var tagDetector = AprilTagDetector()
+    private let tagTracker = AprilTagTracker()
     private var lastFrameTime: CFTimeInterval = 0
     private var smoothedFPS: Double = 0
 
     init() {
         selectedModel = models.first
-        camera.onFrame = { [weak self] buffer in self?.process(buffer) }
+        camera.onFrame = { [weak self] frame in self?.process(frame) }
     }
 
     func start() {
@@ -111,31 +165,55 @@ final class DetectorViewModel: ObservableObject {
 
     // MARK: - Per-frame processing (camera.videoQueue)
 
-    private func process(_ pixelBuffer: CVPixelBuffer) {
-        guard !isPaused, let detector else { return }
-        do {
-            let result = try detector.detect(pixelBuffer: pixelBuffer, confidence: confidenceThreshold)
-            let now = CACurrentMediaTime()
-            if lastFrameTime > 0 {
-                let instant = 1 / max(now - lastFrameTime, 1e-6)
-                smoothedFPS = smoothedFPS == 0 ? instant : smoothedFPS * 0.9 + instant * 0.1
-            }
-            lastFrameTime = now
+    private func process(_ frame: CameraFrame) {
+        guard !isPaused else { return }
+        let pixelBuffer = frame.pixelBuffer
+        let size = CGSize(width: CVPixelBufferGetWidth(pixelBuffer), height: CVPixelBufferGetHeight(pixelBuffer))
+        var stats = FrameStats()
+        var detections: [Detection] = []
+        var tags: [TagOverlay] = []
+        var failure: String?
 
-            let size = CGSize(width: CVPixelBufferGetWidth(pixelBuffer), height: CVPixelBufferGetHeight(pixelBuffer))
-            let stats = FrameStats(
-                fps: smoothedFPS,
-                inferenceMs: result.inferenceMs,
-                postprocessMs: result.postprocessMs,
-                objectCount: result.detections.count
-            )
-            DispatchQueue.main.async {
-                self.detections = result.detections
-                self.imageSize = size
-                self.stats = stats
+        if activeMode.runsYOLO, let detector {
+            do {
+                let result = try detector.detect(pixelBuffer: pixelBuffer, confidence: confidenceThreshold)
+                detections = result.detections
+                stats.inferenceMs = result.inferenceMs
+                stats.postprocessMs = result.postprocessMs
+                stats.objectCount = result.detections.count
+            } catch {
+                failure = "推理失败：\(error.localizedDescription)"
             }
-        } catch {
-            DispatchQueue.main.async { self.errorMessage = "推理失败：\(error.localizedDescription)" }
+        }
+
+        if activeMode.runsAprilTag {
+            let start = CACurrentMediaTime()
+            let poses = tagDetector.detect(
+                pixelBuffer: pixelBuffer,
+                intrinsics: frame.intrinsics,
+                tagSize: activeTagSize,
+                orientation: activeTagOrientation
+            )
+            stats.tagMs = (CACurrentMediaTime() - start) * 1000
+            stats.tagCount = poses.count
+            stats.intrinsicsFromCamera = frame.intrinsics.isFromCamera
+            tags = tagTracker.update(with: poses, intrinsics: frame.intrinsics, imageSize: size, at: start)
+        }
+
+        let now = CACurrentMediaTime()
+        if lastFrameTime > 0 {
+            let instant = 1 / max(now - lastFrameTime, 1e-6)
+            smoothedFPS = smoothedFPS == 0 ? instant : smoothedFPS * 0.9 + instant * 0.1
+        }
+        lastFrameTime = now
+        stats.fps = smoothedFPS
+
+        DispatchQueue.main.async {
+            self.detections = detections
+            self.tags = tags
+            self.imageSize = size
+            self.stats = stats
+            if let failure { self.errorMessage = failure }
         }
     }
 
@@ -148,7 +226,11 @@ final class DetectorViewModel: ObservableObject {
         benchmarkResults = []
         camera.videoQueue.async {
             self.isPaused = true
-            DispatchQueue.main.async { self.detections = [] }
+            self.tagTracker.reset()
+            DispatchQueue.main.async {
+                self.detections = []
+                self.tags = []
+            }
         }
 
         Task.detached(priority: .userInitiated) {

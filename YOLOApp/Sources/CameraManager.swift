@@ -1,16 +1,34 @@
 import AVFoundation
 import CoreVideo
+import simd
 
-/// Back-camera capture delivering portrait BGRA frames on `videoQueue`.
+/// Pinhole intrinsics in pixels of the delivered (portrait) frame.
+struct CameraIntrinsics {
+    var fx: Double
+    var fy: Double
+    var cx: Double
+    var cy: Double
+    /// True when taken from AVFoundation's per-frame matrix, false when estimated from the field of view.
+    var isFromCamera: Bool
+}
+
+struct CameraFrame {
+    let pixelBuffer: CVPixelBuffer
+    let intrinsics: CameraIntrinsics
+}
+
+/// Back-camera capture delivering portrait 420f (full-range NV12) frames on `videoQueue`.
 final class CameraManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     let session = AVCaptureSession()
     let videoQueue = DispatchQueue(label: "yolo.camera.video", qos: .userInitiated)
     /// Called on `videoQueue` for every frame that isn't dropped.
-    var onFrame: ((CVPixelBuffer) -> Void)?
+    var onFrame: ((CameraFrame) -> Void)?
 
     private let sessionQueue = DispatchQueue(label: "yolo.camera.session")
     private let output = AVCaptureVideoDataOutput()
     private var isConfigured = false
+    /// Horizontal field of view of the active format in degrees (along the sensor's long side).
+    private var fieldOfView: Float = 70
 
     /// Requests permission, configures the session and starts it. `completion` runs on the main queue.
     func start(completion: @escaping (String?) -> Void) {
@@ -55,16 +73,23 @@ final class CameraManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
             return "相机打开失败：\(error.localizedDescription)"
         }
 
-        output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+        // Luma plane feeds AprilTag directly; Vision converts for YOLO.
+        output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange]
         output.alwaysDiscardsLateVideoFrames = true
         output.setSampleBufferDelegate(self, queue: videoQueue)
         guard session.canAddOutput(output) else { return "无法添加视频输出" }
         session.addOutput(output)
 
-        if let connection = output.connection(with: .video), connection.isVideoRotationAngleSupported(90) {
-            connection.videoRotationAngle = 90 // portrait buffers
+        if let connection = output.connection(with: .video) {
+            if connection.isVideoRotationAngleSupported(90) {
+                connection.videoRotationAngle = 90 // portrait buffers
+            }
+            if connection.isCameraIntrinsicMatrixDeliverySupported {
+                connection.isCameraIntrinsicMatrixDeliveryEnabled = true
+            }
         }
         enableHighFrameRate(device, fps: 60)
+        fieldOfView = device.activeFormat.videoFieldOfView
         return nil
     }
 
@@ -85,6 +110,29 @@ final class CameraManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        onFrame?(pixelBuffer)
+        let width = Double(CVPixelBufferGetWidth(pixelBuffer))
+        let height = Double(CVPixelBufferGetHeight(pixelBuffer))
+        let matrix = CMGetAttachment(sampleBuffer, key: kCMSampleBufferAttachmentKey_CameraIntrinsicMatrix, attachmentModeOut: nil) as? Data
+        let intrinsics = matrix.flatMap { parseIntrinsics($0, width: width, height: height) }
+            ?? estimatedIntrinsics(width: width, height: height)
+        onFrame?(CameraFrame(pixelBuffer: pixelBuffer, intrinsics: intrinsics))
+    }
+
+    private func parseIntrinsics(_ data: Data, width: Double, height: Double) -> CameraIntrinsics? {
+        guard data.count >= MemoryLayout<matrix_float3x3>.size else { return nil }
+        let m = data.withUnsafeBytes { $0.loadUnaligned(as: matrix_float3x3.self) }
+        var fx = Double(m.columns.0.x), fy = Double(m.columns.1.y)
+        var cx = Double(m.columns.2.x), cy = Double(m.columns.2.y)
+        // The matrix may describe the unrotated landscape sensor; rotate it 90° clockwise like the frame.
+        if (cx > cy) != (width > height) {
+            (fx, fy, cx, cy) = (fy, fx, width - cy, cx)
+        }
+        let plausible = fx > 0 && fy > 0 && abs(cx - width / 2) < width * 0.2 && abs(cy - height / 2) < height * 0.2
+        return plausible ? CameraIntrinsics(fx: fx, fy: fy, cx: cx, cy: cy, isFromCamera: true) : nil
+    }
+
+    private func estimatedIntrinsics(width: Double, height: Double) -> CameraIntrinsics {
+        let focal = max(width, height) / 2 / tan(Double(fieldOfView) * .pi / 360)
+        return CameraIntrinsics(fx: focal, fy: focal, cx: width / 2, cy: height / 2, isFromCamera: false)
     }
 }

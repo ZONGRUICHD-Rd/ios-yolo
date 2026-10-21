@@ -15,6 +15,8 @@
 - 模型切换（CI 默认打包 `yolo26n`、`yolo26s`）、置信度阈值调节
 - 实时显示 FPS、推理耗时、后处理耗时、目标数
 - **跑分对比**：依次在 NPU / GPU / CPU 上测 50 次推理的平均/中位/最快耗时，并用 `MLComputePlan`（iOS 17.4+）显示各设备实际承担的算子占比，验证模型确实跑在所选单元上
+- **AprilTag 追踪与 3D 坐标系**（tag36h11）：画出每个 Tag 的轮廓、ID 和轨迹，并按 ID 跨帧追踪（短暂丢失时保留 0.3 秒）。以每个 Tag 的**左上角**为原点建立右手坐标系：X 沿上边向右，Y 沿左边向下，Z 垂直指入 Tag。实时显示原点在相机坐标系下的位置 (cm) 和距离
+- 检测模式：YOLO / AprilTag / 同时
 - 同时支持 YOLO26 的 NMS-free 端到端输出（`[1,300,6]`）和 YOLO11/YOLOv8 的原始输出（`[1,84,8400]`，App 内做 NMS），可直接换成自己训练的模型
 
 ## 构建 IPA（GitHub Actions）
@@ -46,17 +48,27 @@ xcodegen generate && open YOLOApp.xcodeproj
 
 使用自定义模型：把训练好的 `best.pt` 放进仓库，手动运行工作流时 `models` 填 `best.pt` 即可（类别名从模型元数据读取）。
 
+## AprilTag 说明
+
+- **Tag 边长**：在 App 里设置 Tag 外圈黑色正方形的边长（不含白边）。默认 6.9 cm，是按 tag36h11 ID 0–5 那张 A4 图 100% 打印估算的；位姿和距离的单位以此为准，请用尺子量一下实际打印的尺寸。
+- **图案方向**：那张 A4 图里的图案相对 AprilTag 官方参考图（`tag36_11_00000.png` 等）旋转了 180°，两者的"左上角"是对角。默认"打印图"对应那张 A4（ID 文字在 Tag 下方时的左上角）；如果打印的是官方 PNG，切到"官方图"。
+- **相机内参**：优先使用 AVFoundation 每帧给出的内参矩阵；拿不到时按当前格式的视场角估算（HUD 显示"FOV 估算"），此时距离会有几个百分点的误差。
+- 检测用的是 [AprilTag 3](https://github.com/AprilRobotics/apriltag) C 库（v3.4.5，BSD-2，`ThirdParty/apriltag`），直接读取相机 420f 帧的亮度平面，在 CPU 多线程运行；位姿由 `estimate_tag_pose` 求解。
+
 ## 代码结构
 
 ```
 YOLOApp/Sources/
   YOLODetector.swift          Core ML 加载、Vision 推理、输出解码 / NMS、跑分
   ComputePlanInspector.swift  MLComputePlan 分析每个算子被分配到 NPU/GPU/CPU
-  CameraManager.swift         AVCaptureSession，竖屏 BGRA 帧
+  CameraManager.swift         AVCaptureSession，竖屏 420f 帧 + 每帧相机内参
   DetectorViewModel.swift     模型加载/切换、逐帧处理、跑分调度
   ContentView.swift           主界面（预览、HUD、控制面板）
   DetectionOverlay.swift      检测框绘制
   BenchmarkView.swift         跑分结果页
+  AprilTag/AprilTagBridge.c   AprilTag C 库的精简封装（检测 + 位姿）
+  AprilTag/AprilTagDetector.swift  左上角坐标系换算、按 ID 追踪、投影
+ThirdParty/apriltag/          AprilTag 3 源码（仅 tag36h11）
 scripts/export_models.py      YOLO → Core ML 导出
 project.yml                   XcodeGen 工程定义
 ```

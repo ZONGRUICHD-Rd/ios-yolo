@@ -1,0 +1,2 @@
+AprilTag 3 (https://github.com/AprilRobotics/apriltag), tag v3.4.5 (94be783).
+Only the tag36h11 family, detector, pose estimation and common/ are vendored. BSD 2-Clause, see LICENSE.md.

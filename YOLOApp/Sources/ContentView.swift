@@ -9,7 +9,7 @@ struct ContentView: View {
             Color.black.ignoresSafeArea()
             CameraPreview(session: viewModel.camera.session)
                 .ignoresSafeArea()
-            DetectionOverlay(detections: viewModel.detections, imageSize: viewModel.imageSize)
+            DetectionOverlay(detections: viewModel.detections, tags: viewModel.tags, imageSize: viewModel.imageSize)
                 .ignoresSafeArea()
 
             VStack(spacing: 0) {
@@ -35,9 +35,9 @@ struct ContentView: View {
     private var statsHUD: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text(viewModel.selectedModel?.name ?? "无模型")
+                Text(viewModel.detectionMode == .aprilTag ? "AprilTag" : viewModel.selectedModel?.name ?? "无模型")
                     .font(.headline)
-                Text(viewModel.computeMode.title)
+                Text(viewModel.detectionMode == .aprilTag ? "CPU" : viewModel.computeMode.title)
                     .font(.caption.bold())
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -46,10 +46,19 @@ struct ContentView: View {
                 Text(String(format: "%.1f FPS", viewModel.stats.fps))
                     .font(.headline.monospacedDigit())
             }
-            HStack(spacing: 12) {
-                metric("推理", String(format: "%.1f ms", viewModel.stats.inferenceMs))
-                metric("后处理", String(format: "%.2f ms", viewModel.stats.postprocessMs))
-                metric("目标", "\(viewModel.stats.objectCount)")
+            if viewModel.detectionMode.runsYOLO {
+                HStack(spacing: 12) {
+                    metric("推理", String(format: "%.1f ms", viewModel.stats.inferenceMs))
+                    metric("后处理", String(format: "%.2f ms", viewModel.stats.postprocessMs))
+                    metric("目标", "\(viewModel.stats.objectCount)")
+                }
+            }
+            if viewModel.detectionMode.runsAprilTag {
+                HStack(spacing: 12) {
+                    metric("AprilTag", String(format: "%.1f ms", viewModel.stats.tagMs))
+                    metric("Tag", "\(viewModel.stats.tagCount)")
+                    metric("内参", viewModel.stats.intrinsicsFromCamera ? "相机标定" : "FOV 估算")
+                }
             }
             if let error = viewModel.errorMessage {
                 Text(error).font(.caption).foregroundColor(.red)
@@ -72,23 +81,18 @@ struct ContentView: View {
 
     private var controlPanel: some View {
         VStack(spacing: 12) {
-            Picker("计算单元", selection: $viewModel.computeMode) {
-                ForEach(ComputeMode.allCases) { mode in
+            Picker("检测模式", selection: $viewModel.detectionMode) {
+                ForEach(DetectionMode.allCases) { mode in
                     Text(mode.title).tag(mode)
                 }
             }
             .pickerStyle(.segmented)
 
-            Text(viewModel.computeMode.detail)
-                .font(.caption2)
-                .foregroundColor(.secondary)
-
-            HStack {
-                Text("置信度").font(.caption)
-                Slider(value: $viewModel.confidence, in: 0.05...0.95, step: 0.05)
-                Text(String(format: "%.2f", viewModel.confidence))
-                    .font(.caption.monospacedDigit())
-                    .frame(width: 36)
+            if viewModel.detectionMode.runsYOLO {
+                yoloControls
+            }
+            if viewModel.detectionMode.runsAprilTag {
+                aprilTagControls
             }
 
             HStack {
@@ -115,5 +119,48 @@ struct ContentView: View {
         .padding(12)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
         .padding(.bottom, 8)
+    }
+
+    @ViewBuilder
+    private var yoloControls: some View {
+        Picker("计算单元", selection: $viewModel.computeMode) {
+            ForEach(ComputeMode.allCases) { mode in
+                Text(mode.title).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+
+        Text(viewModel.computeMode.detail)
+            .font(.caption2)
+            .foregroundColor(.secondary)
+
+        HStack {
+            Text("置信度").font(.caption)
+            Slider(value: $viewModel.confidence, in: 0.05...0.95, step: 0.05)
+            Text(String(format: "%.2f", viewModel.confidence))
+                .font(.caption.monospacedDigit())
+                .frame(width: 36)
+        }
+    }
+
+    @ViewBuilder
+    private var aprilTagControls: some View {
+        HStack {
+            Stepper(value: $viewModel.tagSizeCM, in: 1...100, step: 0.1) {
+                Text(String(format: "Tag 边长 %.1f cm", viewModel.tagSizeCM))
+                    .font(.caption.monospacedDigit())
+            }
+            Picker("图案方向", selection: $viewModel.tagOrientation) {
+                ForEach(TagPatternOrientation.allCases) { orientation in
+                    Text(orientation.title).tag(orientation)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 120)
+        }
+
+        Text("tag36h11 · 原点=Tag 左上角 · X→右 Y→下 Z→垂直指入 Tag · 坐标为相机系 (cm)")
+            .font(.caption2)
+            .foregroundColor(.secondary)
     }
 }

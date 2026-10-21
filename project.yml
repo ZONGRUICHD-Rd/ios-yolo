@@ -17,6 +17,10 @@ targets:
     platform: iOS
     sources:
       - path: YOLOApp/Sources
+      # AprilTag 3 C library (BSD-2), tag36h11 only; see ThirdParty/apriltag/VERSION.txt
+      - path: ThirdParty/apriltag
+        excludes: ["*.md", "*.txt"]
+        compilerFlags: ["-w"]
       # Compiled .mlmodelc bundles produced by CI; copied as-is into YOLOApp.app/Models
       - path: Models
         type: folder
@@ -28,6 +32,8 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         SUPPORTS_MACCATALYST: NO
         ENABLE_PREVIEWS: YES
+        SWIFT_OBJC_BRIDGING_HEADER: YOLOApp/Sources/YOLOApp-Bridging-Header.h
+        HEADER_SEARCH_PATHS: $(SRCROOT)/ThirdParty/apriltag
     info:
       path: YOLOApp/Info.plist
       properties:
