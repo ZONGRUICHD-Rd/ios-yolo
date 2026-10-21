@@ -26,7 +26,7 @@
 1. push 到 `main`/`master`、提 PR 或在 Actions 页面手动运行 **Build unsigned IPA**
 2. 手动运行时可填写要打包的模型（如 `yolo26n yolo26s yolo26m`）和权重精度（FP16 / INT8 / FP32）
 3. 在运行详情页的 **Artifacts** 下载 `YOLOApp-unsigned-ipa`
-4. 推送 `v*` 标签（如 `v1.0.0`）时，IPA 会自动附加到 GitHub Release
+4. 发版：手动运行时在 `release_tag` 填版本号（如 `v1.0.1`），或推送 `v*` 标签，都会创建 GitHub Release 并附上 IPA；发版说明取自 `docs/release-notes/<版本号>.md`（没有则用 GitHub 自动生成的）
 
 流程：`pip install ultralytics` → `export_models.py` 导出 `.mlpackage`（`nms=False` 保留 YOLO26 的端到端头）→ `coremlcompiler` 编译为 `.mlmodelc` → XcodeGen 生成工程 → `xcodebuild`（`CODE_SIGNING_ALLOWED=NO`）→ 打包 `Payload/` 为 `.ipa`。
 
