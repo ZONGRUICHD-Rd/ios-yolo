@@ -85,4 +85,8 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          name: ${{ github.ref_name }}
+          # Write docs/release-notes/<tag>.md before tagging; GitHub's generated notes are used otherwise
+          body_path: ${{ hashFiles(format('docs/release-notes/{0}.md', github.ref_name)) != '' && format('docs/release-notes/{0}.md', github.ref_name) || '' }}
+          generate_release_notes: ${{ hashFiles(format('docs/release-notes/{0}.md', github.ref_name)) == '' }}
           files: dist/YOLOApp-unsigned.ipa
