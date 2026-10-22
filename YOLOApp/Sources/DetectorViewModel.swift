@@ -76,6 +76,13 @@ final class DetectorViewModel: ObservableObject {
             camera.videoQueue.async { self.activeTagSize = meters }
         }
     }
+    /// AprilTag pose smoothing, 0 = most responsive, 1 = steadiest.
+    @Published var tagSmoothing: Double = 0.5 {
+        didSet {
+            let value = tagSmoothing
+            camera.videoQueue.async { self.tagTracker.smoothing = value }
+        }
+    }
     @Published var tagOrientation: TagPatternOrientation = .rotated180 {
         didSet {
             let orientation = tagOrientation
@@ -188,16 +195,18 @@ final class DetectorViewModel: ObservableObject {
 
         if activeMode.runsAprilTag {
             let start = CACurrentMediaTime()
-            let poses = tagDetector.detect(
-                pixelBuffer: pixelBuffer,
+            let found = tagDetector.detect(pixelBuffer: pixelBuffer, intrinsics: frame.intrinsics, tagSize: activeTagSize)
+            tags = tagTracker.update(
+                with: found,
+                timestamp: frame.timestamp.isFinite ? frame.timestamp : start,
                 intrinsics: frame.intrinsics,
+                imageSize: size,
                 tagSize: activeTagSize,
                 orientation: activeTagOrientation
             )
             stats.tagMs = (CACurrentMediaTime() - start) * 1000
-            stats.tagCount = poses.count
+            stats.tagCount = found.count
             stats.intrinsicsFromCamera = frame.intrinsics.isFromCamera
-            tags = tagTracker.update(with: poses, intrinsics: frame.intrinsics, imageSize: size, at: start)
         }
 
         let now = CACurrentMediaTime()

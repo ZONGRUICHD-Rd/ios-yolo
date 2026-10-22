@@ -13,12 +13,15 @@ typedef struct {
     float decision_margin;
     /// Detected corners in pixels, (x, y) pairs in AprilTag's order (counter-clockwise).
     double corners[8];
-    /// Row-major rotation and translation (meters) mapping AprilTag's tag frame
-    /// (origin at tag center, x right, y down, z into the tag) into the camera frame.
-    double R[9];
-    double t[3];
-    /// Object-space error reported by the pose solver.
-    double pose_error;
+    /// Pose candidates from AprilTag's orthogonal iteration, lowest error first. Each is a row-major
+    /// rotation and a translation (meters) mapping AprilTag's tag frame (origin at tag center,
+    /// x right, y down, z into the tag) into the camera frame. A small, face-on tag fits both
+    /// about equally well (planar pose ambiguity), so the tracker picks between them over time.
+    double R[2][9];
+    double t[2][3];
+    /// Object-space error of each candidate; error[1] is HUGE_VAL when there is no second candidate.
+    double error[2];
+    int candidate_count;
 } yolo_tag_result;
 
 yolo_tag_detector *yolo_tag_detector_create(int nthreads, float quad_decimate);

@@ -1,5 +1,6 @@
 #include "AprilTagBridge.h"
 
+#include <math.h>
 #include <stdlib.h>
 
 #include "apriltag.h"
@@ -54,14 +55,24 @@ int yolo_tag_detect(yolo_tag_detector *d,
         }
 
         apriltag_detection_info_t info = { det, tag_size, fx, fy, cx, cy };
-        apriltag_pose_t pose;
-        r->pose_error = estimate_tag_pose(&info, &pose);
-        for (int row = 0; row < 3; row++) {
-            for (int col = 0; col < 3; col++) r->R[row * 3 + col] = matd_get(pose.R, row, col);
-            r->t[row] = matd_get(pose.t, row, 0);
+        apriltag_pose_t poses[2] = { { 0 }, { 0 } };
+        double errors[2];
+        estimate_tag_pose_orthogonal_iteration(&info, &errors[0], &poses[0], &errors[1], &poses[1], 50);
+        r->candidate_count = poses[1].R ? 2 : 1;
+        int first = (r->candidate_count == 2 && errors[1] < errors[0]) ? 1 : 0;
+        for (int k = 0; k < r->candidate_count; k++) {
+            int src = k == 0 ? first : 1 - first;
+            r->error[k] = errors[src];
+            for (int row = 0; row < 3; row++) {
+                for (int col = 0; col < 3; col++) r->R[k][row * 3 + col] = matd_get(poses[src].R, row, col);
+                r->t[k][row] = matd_get(poses[src].t, row, 0);
+            }
         }
-        matd_destroy(pose.R);
-        matd_destroy(pose.t);
+        if (r->candidate_count == 1) r->error[1] = HUGE_VAL;
+        for (int k = 0; k < 2; k++) {
+            matd_destroy(poses[k].R);
+            matd_destroy(poses[k].t);
+        }
     }
     apriltag_detections_destroy(detections);
     return count;

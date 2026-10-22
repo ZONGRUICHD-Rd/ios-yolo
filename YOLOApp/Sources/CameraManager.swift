@@ -15,6 +15,8 @@ struct CameraIntrinsics {
 struct CameraFrame {
     let pixelBuffer: CVPixelBuffer
     let intrinsics: CameraIntrinsics
+    /// Presentation time, seconds.
+    let timestamp: Double
 }
 
 /// Back-camera capture delivering portrait 420f (full-range NV12) frames on `videoQueue`.
@@ -115,7 +117,8 @@ final class CameraManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         let matrix = CMGetAttachment(sampleBuffer, key: kCMSampleBufferAttachmentKey_CameraIntrinsicMatrix, attachmentModeOut: nil) as? Data
         let intrinsics = matrix.flatMap { parseIntrinsics($0, width: width, height: height) }
             ?? estimatedIntrinsics(width: width, height: height)
-        onFrame?(CameraFrame(pixelBuffer: pixelBuffer, intrinsics: intrinsics))
+        let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds
+        onFrame?(CameraFrame(pixelBuffer: pixelBuffer, intrinsics: intrinsics, timestamp: timestamp))
     }
 
     private func parseIntrinsics(_ data: Data, width: Double, height: Double) -> CameraIntrinsics? {

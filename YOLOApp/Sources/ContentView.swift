@@ -159,7 +159,15 @@ struct ContentView: View {
             .frame(width: 120)
         }
 
-        Text("tag36h11 · 原点=Tag 左上角 · X→右 Y→下 Z→垂直指入 Tag · 坐标为相机系 (cm)")
+        HStack {
+            Text("平滑").font(.caption)
+            Slider(value: $viewModel.tagSmoothing, in: 0...1)
+            Text(viewModel.tagSmoothing < 0.34 ? "灵敏" : viewModel.tagSmoothing < 0.67 ? "均衡" : "稳定")
+                .font(.caption)
+                .frame(width: 36)
+        }
+
+        Text("tag36h11 · 原点=Tag 左上角 · X→右 Y→上 Z→垂直指出 Tag · 坐标为相机系 (cm)")
             .font(.caption2)
             .foregroundColor(.secondary)
     }
