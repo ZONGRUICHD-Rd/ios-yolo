@@ -53,23 +53,69 @@ struct Detection {
 struct ModelInfo: Identifiable, Hashable {
     let name: String
     let url: URL
+    /// Compiled size on disk, bytes.
+    let byteCount: Int
 
     var id: String { name }
 
-    /// Compiled models shipped in `YOLOApp.app/Models`, ordered n, s, m, l, x.
+    private static let scales: [Character] = ["n", "s", "m", "l", "x"]
+
+    /// Size suffix of Ultralytics names ("yolov8l" → "l"); nil for other names such as "best".
+    var scale: Character? {
+        guard name.lowercased().hasPrefix("yolo"), let last = name.last, Self.scales.contains(last) else { return nil }
+        return last
+    }
+
+    /// "yolov8l" → "yolov8"; names without a scale are their own family.
+    var family: String { scale == nil ? name : String(name.dropLast()) }
+
+    var familyTitle: String {
+        family.lowercased().hasPrefix("yolo") ? "YOLO" + family.dropFirst(4) : family
+    }
+
+    var menuTitle: String { String(format: "%@ · %.0f MB", name, Double(byteCount) / 1_048_576) }
+
+    /// Compiled models shipped in `YOLOApp.app/Models`, grouped by family and ordered n, s, m, l, x.
     static func bundled() -> [ModelInfo] {
         guard let dir = Bundle.main.resourceURL?.appendingPathComponent("Models"),
               let urls = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
         else { return [] }
-        let sizeOrder = "nsmlx"
-        func rank(_ name: String) -> Int {
-            guard let last = name.last, let index = sizeOrder.firstIndex(of: last) else { return sizeOrder.count }
-            return sizeOrder.distance(from: sizeOrder.startIndex, to: index)
+        func rank(_ model: ModelInfo) -> Int {
+            model.scale.flatMap { scales.firstIndex(of: $0) } ?? scales.count
         }
         return urls
             .filter { $0.pathExtension == "mlmodelc" }
-            .map { ModelInfo(name: $0.deletingPathExtension().lastPathComponent, url: $0) }
-            .sorted { (rank($0.name), $0.name) < (rank($1.name), $1.name) }
+            .map { ModelInfo(name: $0.deletingPathExtension().lastPathComponent, url: $0, byteCount: directorySize($0)) }
+            .sorted { ($0.family, rank($0), $0.name) < ($1.family, rank($1), $1.name) }
+    }
+
+    private static func directorySize(_ url: URL) -> Int {
+        guard let files = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
+        var total = 0
+        for case let file as URL in files {
+            total += (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        }
+        return total
+    }
+}
+
+struct ModelGroup: Identifiable {
+    let title: String
+    let models: [ModelInfo]
+
+    var id: String { title }
+
+    /// Consecutive models of the same family, as `bundled()` orders them.
+    static func groups(of models: [ModelInfo]) -> [ModelGroup] {
+        var groups: [ModelGroup] = []
+        for model in models {
+            if let last = groups.last, last.title == model.familyTitle {
+                groups[groups.count - 1] = ModelGroup(title: last.title, models: last.models + [model])
+            } else {
+                groups.append(ModelGroup(title: model.familyTitle, models: [model]))
+            }
+        }
+        return groups
     }
 }
 

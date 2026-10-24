@@ -12,7 +12,7 @@
   | GPU | `.cpuAndGPU` | Metal GPU（Core ML 没有"纯 GPU"选项，这是最接近的） |
   | CPU | `.cpuOnly` | 仅 CPU |
   | Auto | `.all` | 由系统调度 |
-- 模型切换（CI 默认打包 `yolo26n`、`yolo26s`）、置信度阈值调节
+- 模型切换：CI 默认打包 **YOLO26** 和 **YOLOv8** 的 n / s / m / l 共 8 个模型，菜单按系列分组并显示大小；置信度阈值可调
 - 实时显示 FPS、推理耗时、后处理耗时、目标数
 - **跑分对比**：依次在 NPU / GPU / CPU 上测 50 次推理的平均/中位/最快耗时，并用 `MLComputePlan`（iOS 17.4+）显示各设备实际承担的算子占比，验证模型确实跑在所选单元上
 - **AprilTag 追踪与 3D 坐标系**（tag36h11）：画出每个 Tag 的轮廓、ID 和轨迹，并按 ID 跨帧追踪（短暂丢失时保留 0.3 秒）。以每个 Tag 的**左上角**为原点建立右手坐标系：X 沿上边向右，Y 向上，Z 垂直指出 Tag（朝向相机），与 OpenCV/ArUco 的标记坐标系方向一致。实时显示原点在相机坐标系下的位置 (cm) 和距离
@@ -24,7 +24,7 @@
 工作流：`.github/workflows/build-ipa.yml`，运行在 `macos-26`（Xcode 26）。
 
 1. push 到 `main`/`master`、提 PR 或在 Actions 页面手动运行 **Build unsigned IPA**
-2. 手动运行时可填写要打包的模型（如 `yolo26n yolo26s yolo26m`）和权重精度（FP16 / INT8 / FP32）
+2. 手动运行时可填写要打包的模型（Ultralytics 权重名，如 `yolo26x yolov8x yolo11n`，或仓库里的 `.pt` 路径）和权重精度（FP16 / INT8 / FP32）。默认 8 个模型 FP16 约 275 MB，IPA 也差不多这么大；加上 x 版本会再多约 250 MB，可以改用 INT8 让体积减半
 3. 在运行详情页的 **Artifacts** 下载 `YOLOApp-unsigned-ipa`
 4. 发版：手动运行时在 `release_tag` 填版本号（如 `v1.0.1`），或推送 `v*` 标签，都会创建 GitHub Release 并附上 IPA；发版说明取自 `docs/release-notes/<版本号>.md`（没有则用 GitHub 自动生成的）
 

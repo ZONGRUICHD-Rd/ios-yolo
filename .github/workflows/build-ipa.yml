@@ -9,7 +9,7 @@ on:
     inputs:
       models:
         description: "要打包的模型（空格分隔，Ultralytics 权重名或仓库内 .pt 路径）"
-        default: "yolo26n yolo26s"
+        default: "yolo26n yolo26s yolo26m yolo26l yolov8n yolov8s yolov8m yolov8l"
       quantize:
         description: "权重精度"
         type: choice
@@ -27,7 +27,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 45
     env:
-      MODELS: ${{ inputs.models || 'yolo26n yolo26s' }}
+      MODELS: ${{ inputs.models || 'yolo26n yolo26s yolo26m yolo26l yolov8n yolov8s yolov8m yolov8l' }}
       QUANTIZE: ${{ inputs.quantize || '16' }}
       # Pushed v* tag, or a tag to create from a manual run
       RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.release_tag }}

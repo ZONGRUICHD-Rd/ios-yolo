@@ -97,8 +97,20 @@ struct ContentView: View {
 
             HStack {
                 Menu {
-                    ForEach(viewModel.models) { model in
-                        Button(model.name) { viewModel.selectedModel = model }
+                    ForEach(ModelGroup.groups(of: viewModel.models)) { group in
+                        Section(group.title) {
+                            ForEach(group.models) { model in
+                                Button {
+                                    viewModel.selectedModel = model
+                                } label: {
+                                    if model == viewModel.selectedModel {
+                                        Label(model.menuTitle, systemImage: "checkmark")
+                                    } else {
+                                        Text(model.menuTitle)
+                                    }
+                                }
+                            }
+                        }
                     }
                 } label: {
                     Label(viewModel.selectedModel?.name ?? "选择模型", systemImage: "cube.box")
